@@ -1,0 +1,1 @@
+Arquivo abc do host para a imagem

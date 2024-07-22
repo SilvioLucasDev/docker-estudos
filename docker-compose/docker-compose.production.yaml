@@ -1,0 +1,134 @@
+version: '3.8'
+
+services:
+  http:
+    container_name: http
+    image: nginx:stable-alpine3.19-slim
+    ports:
+      - "8080:80"
+      - "8443:443"
+    networks:
+      - slds
+    restart: "no"
+    depends_on:
+      front-end:
+        condition: service_started
+      back-end:
+        condition: service_started
+
+  front-end:
+    container_name: front-end
+    build:
+      context: ./front-end/
+      dockerfile: Dockerfile.production
+      target: dev
+    volumes:
+      - ./front-end:/app
+    ports:
+      - "3000:3000"
+    networks:
+      - slds
+    restart: always
+    depends_on:
+      - back-end
+
+  back-end:
+    container_name: back-end
+    build:
+      context: ./back-end/
+      dockerfile: Dockerfile.production
+      target: dev
+    volumes:
+      - ./back-end:/app
+    ports:
+      - "3001:3000"
+    networks:
+      - slds
+    restart: on-failure:5
+    depends_on:
+      migration:
+        condition: service_completed_successfully
+      database:
+        condition: service_healthy
+      nosql:
+        condition: service_started
+      cache:
+        condition: service_started
+      messaging:
+        condition: service_started
+
+  migration:
+    container_name: migration
+    image: alpine:latest
+    networks:
+      - slds
+    command: sleep 10
+    depends_on:
+      database:
+        condition: service_started
+
+  database:
+    container_name: database
+    image: postgres:16.3-alpine3.20
+    environment:
+      POSTGRES_PASSWORD: root
+    volumes:
+      - slds-database:/var/lib/postgresql/data
+    ports:
+      - "5432:5432" # Portas de banco em ambiente produtivo não devem ser expostas
+    networks:
+      - slds
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  database-adminer:
+    container_name: database-adminer
+    image: adminer:4.8.1
+    ports:
+      - 8090:8080
+    networks:
+      - slds
+    depends_on:
+      - database
+
+  nosql:
+    container_name: nosql
+    image: mongo:7.0.12-jammy
+    env_file:
+      - ./nosql/.env.production
+    volumes:
+      - slds-nosql:/data/db
+    ports:
+      - "27017:27017" # Portas de banco em ambiente produtivo não devem ser expostas
+    networks:
+      - slds
+
+  cache:
+    container_name: cache
+    image: redis:7.2.5-alpine3.20
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "6379:6379" # Portas de banco em ambiente produtivo não devem ser expostas
+    networks:
+      - slds
+
+  messaging:
+    container_name: messaging
+    image: apache/kafka:3.7.1
+    ports:
+      - "9092:9092"
+    networks:
+      - slds
+
+networks:
+  slds:
+    name: slds
+    driver: bridge
+
+volumes:
+  slds-database:
+  slds-nosql:
